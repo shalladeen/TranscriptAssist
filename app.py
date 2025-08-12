@@ -11,6 +11,8 @@ nlp = spacy.load("en_core_web_sm")
 df = pd.DataFrame()
 
 
+
+
 # Function to extract text from a Word document
 def extract_text(docx_file):
     doc = Document(docx_file)
@@ -81,39 +83,53 @@ def find_action_items(text, keywords, default_owner, due_days):
 st.set_page_config(page_title="Transcript Action Item Extractor", layout="centered")
 
 st.title("Transcript Action Item Extractor")
-st.write("Upload a Word document containing meeting transcripts to extract action items.")
+st.write(
+    "Upload a `.docx` meeting transcript to automatically extract action items "
+    "and assign owners based on content patterns like keywords, spaCy NLP, and name detection."
+)
 
-# Upload file
-uploaded_file = st.file_uploader("Choose a Word document", type=["docx"])
+st.markdown("---")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload Word document", type=["docx"])
 
 # Settings
-default_owner = st.text_input("Default Owner", "Team Member")
-due_days = st.number_input("Days until Due Date", min_value=0, max_value=30, value=7)
-keywords = st.text_area("Keywords to search for (comma-separated)", "action, follow up, send, complete").split(",")
+with st.expander("Settings"):
+    default_owner = st.text_input("Default owner (used when no name is detected)", "Team Member")
+    due_days = st.number_input("Days until due date", min_value=0, max_value=30, value=7)
+    keywords = st.text_area(
+        "Comma-separated keywords to help detect action items",
+        "action, follow up, send, complete, email, check"
+    ).split(",")
 
+# Process file
 if uploaded_file:
-    # Extract + Process
-    text = extract_text(uploaded_file)
-    df = find_action_items(text, keywords, default_owner, due_days)
+    with st.spinner("Processing transcript..."):
+        text = extract_text(uploaded_file)
+        df = find_action_items(text, keywords, default_owner, due_days)
 
-if not df.empty:
-    st.subheader("Action Items Found")
-    st.dataframe(df)
+    if not df.empty:
+        st.success(f"Found {len(df)} action item(s).")
 
-    # Download as CSV
-    csv_data = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV", csv_data, "action_items.csv", "text/csv")
+        st.subheader("Extracted Action Items")
+        st.dataframe(df)
 
-    # Download as JSON
-    json_data = df.to_json(orient='records', indent=4)
-    st.download_button("Download JSON", json_data, "action_items.json", "application/json")
+        st.subheader("Download Results")
+        col1, col2, col3 = st.columns(3)
 
-    # Download as Markdown
-    md_output = "\n".join([f"-**{row['Action Item']}** (Owner: {row['Owner']}, Due: {row['Due Date']})" for _, row in df.iterrows()])
-    st.download_button("Download Markdown", md_output, "action_items.md", "text/markdown")
+        with col1:
+            csv_data = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV", csv_data, "action_items.csv", "text/csv")
 
-else:
-    st.warning("No action items found with the given keywords. Please check the keywords or the content of the document.")
+        with col2:
+            json_data = df.to_json(orient='records', indent=4)
+            st.download_button("Download JSON", json_data, "action_items.json", "application/json")
 
-    
-
+        with col3:
+            md_output = "\n".join([
+                f"- **{row['Action Item']}** (Owner: {row['Owner']}, Due: {row['Due Date']})"
+                for _, row in df.iterrows()
+            ])
+            st.download_button("Download Markdown", md_output, "action_items.md", "text/markdown")
+    else:
+        st.warning("No action items found. Try adjusting your keywords or checking the transcript formatting.")
