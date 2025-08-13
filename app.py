@@ -52,14 +52,13 @@ ACTION_PATTERNS = [
 NAME_PATTERN = re.compile(r"\b[A-Z][a-z]+,\s[A-Z][a-z]+(?:\s[A-Z]\.)?\b")
 
 # Function to find action items in transcript
-def find_action_items_with_speakers(speaker_blocks, keywords, first_names, due_days):
+def find_action_items_with_speakers(speaker_blocks, keywords):
     action_items = []
-    due_date = (datetime.date.today() + datetime.timedelta(days=due_days)).isoformat()
 
     for speaker, line in speaker_blocks:
         line_clean = line.strip()
-        if not line_clean:
-            continue
+        if not line_clean or len(line_clean.split()) < 4:
+            continue  # skip short/noisy lines
 
         # Detection logic
         keyword_match = any(keyword.lower() in line_clean.lower() for keyword in keywords)
@@ -67,26 +66,25 @@ def find_action_items_with_speakers(speaker_blocks, keywords, first_names, due_d
         spacy_match = is_action_item_spacy(line_clean)
 
         if keyword_match or regex_match or spacy_match:
-            # Owner assignment logic
-            owner = "Unassigned"
+            item_type = "Confirmed"
+        else:
+            # Fallback: if line has a verb or a soft signal
+            doc = nlp(line_clean)
+            has_verb = any(tok.pos_ == "VERB" for tok in doc)
+            has_soft_cue = re.search(r"\b(I|We|Let's|Can|Should|Maybe|Please|Need)\b", line_clean, re.IGNORECASE)
 
-            # Rule 1: If line contains "I’ll", "I will", etc. → speaker owns it
-            if re.search(r"\b(I|I'm|I’ll|I will|I'll)\b", line_clean, re.IGNORECASE):
-                owner = speaker
+            if has_verb or has_soft_cue:
+                item_type = "Possible"
+            else:
+                continue  # skip irrelevant
 
-            # Rule 2: Look for known first names in the action line
-            for fname in first_names:
-                if fname.lower() in line_clean.lower():
-                    owner = fname
-                    break
+        action_items.append({
+            "Action Item": line_clean,
+            "Type": item_type
+        })
 
-            action_items.append({
-                "Action Item": line_clean,
-                "Owner": owner,
-                "Due Date": due_date
-            })
+    return pd.DataFrame(action_items) if action_items else pd.DataFrame(columns=["Action Item", "Type"])
 
-    return pd.DataFrame(action_items) if action_items else pd.DataFrame(columns=["Action Item", "Owner", "Due Date"])
 
 # Extract full and first names from speaker tags
 def extract_names(docx_file):
@@ -174,7 +172,7 @@ if uploaded_file:
     with st.spinner("Analyzing transcript..."):
         speaker_blocks = extract_speaker_blocks(uploaded_file)
         _, first_names = extract_names(uploaded_file)
-        df = find_action_items_with_speakers(speaker_blocks, keywords, first_names, due_days=0)
+        df = find_action_items_with_speakers(speaker_blocks, keywords)
 
     if not df.empty:
         st.success(f"Found {len(df)} action item(s).")
@@ -202,7 +200,7 @@ if uploaded_file:
             st.download_button("Download JSON", json_data, "action_items.json", "application/json")
 
         with col3:
-            md_output = "\n".join([f"- **{row['Action Item']}** (Owner: {row['Owner']})" for _, row in df.iterrows()])
+            md_output = "\n".join([f"- **{row['Action Item']}** _(Type: {row['Type']})_" for _, row in df.iterrows()])
             st.download_button("Download Markdown", md_output, "action_items.md", "text/markdown")
     else:
         st.info("No action items detected in the transcript.")
