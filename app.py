@@ -10,15 +10,11 @@ import datetime
 nlp = spacy.load("en_core_web_sm")
 df = pd.DataFrame()
 
-
-
-
 # Function to extract text from a Word document
 def extract_speaker_blocks(docx_file):
     doc = Document(docx_file)
     speaker_pattern = re.compile(r"^([A-Z][a-z]+,\s[A-Z][a-z]+(?:\s[A-Z]\.)?)\s+(\d{1,2}:\d{2}(?::\d{2})?)")
 
-    
     blocks = []
     current_speaker = None
 
@@ -34,7 +30,6 @@ def extract_speaker_blocks(docx_file):
             blocks.append((current_speaker, line))
 
     return blocks
-
 
 # Spacy Function
 def is_action_item_spacy(line):
@@ -57,7 +52,7 @@ ACTION_PATTERNS = [
 NAME_PATTERN = re.compile(r"\b[A-Z][a-z]+,\s[A-Z][a-z]+(?:\s[A-Z]\.)?\b")
 
 # Function to find action items in transcript
-def find_action_items_with_speakers(speaker_blocks, keywords, due_days):
+def find_action_items_with_speakers(speaker_blocks, keywords, first_names, due_days):
     action_items = []
     due_date = (datetime.date.today() + datetime.timedelta(days=due_days)).isoformat()
 
@@ -66,56 +61,137 @@ def find_action_items_with_speakers(speaker_blocks, keywords, due_days):
         if not line_clean:
             continue
 
+        # Detection logic
         keyword_match = any(keyword.lower() in line_clean.lower() for keyword in keywords)
         regex_match = any(re.search(pattern, line_clean, re.IGNORECASE) for pattern in ACTION_PATTERNS)
         spacy_match = is_action_item_spacy(line_clean)
 
         if keyword_match or regex_match or spacy_match:
+            # Owner assignment logic
+            owner = "Unassigned"
+
+            # Rule 1: If line contains "I’ll", "I will", etc. → speaker owns it
+            if re.search(r"\b(I|I'm|I’ll|I will|I'll)\b", line_clean, re.IGNORECASE):
+                owner = speaker
+
+            # Rule 2: Look for known first names in the action line
+            for fname in first_names:
+                if fname.lower() in line_clean.lower():
+                    owner = fname
+                    break
+
             action_items.append({
                 "Action Item": line_clean,
-                "Owner": speaker,
+                "Owner": owner,
                 "Due Date": due_date
             })
 
     return pd.DataFrame(action_items) if action_items else pd.DataFrame(columns=["Action Item", "Owner", "Due Date"])
 
+# Extract full and first names from speaker tags
+def extract_names(docx_file):
+    doc = Document(docx_file)
+    name_pattern = re.compile(r"\b([A-Z][a-z]+,\s[A-Z][a-z]+(?:\s[A-Z]\.)?)\b")
+
+    full_names = set()
+    first_names = set()
+
+    for para in doc.paragraphs:
+        line = para.text.strip()
+        match = name_pattern.search(line)
+        if match:
+            full_name = match.group(1)
+            full_names.add(full_name)
+            first = full_name.split(",")[1].strip().split(" ")[0]
+            first_names.add(first)
+
+    return sorted(full_names), sorted(first_names)
 
         
 # Streamlit UI
 st.set_page_config(page_title="Transcript Action Item Extractor", layout="wide")
 
-st.title("Transcript Action Item Extractor")
-st.write(
-    "Upload a `.docx` meeting transcript to extract action items with owner attribution."
-)
+# Drag and Drop Style
+st.markdown("""
+    <style>
+    .stFileUploader > div {
+        border: 2px dashed #CBC3E6 !important;
+        border-radius: 8px;
+        background-color: #F2F1F9;
+        transition: background-color 0.3s ease;
+    }
+    .stFileUploader > div:hover {
+        background-color: #E6E3F3 !important;
+    }
+    .stTextInput>div>div>input,
+    .stTextArea textarea {
+    resize: none !important;
+    background-color: white;
+    border: 1px solid #E8E8E8;
+    border-radius: 6px;
+    padding: 0.5rem;
+    font-size: 0.95rem;
+}
+
+    .stButton>button, .stDownloadButton>button {
+        background-color: #5236AB;
+        color: white;
+        border-radius: 5px;
+        padding: 8px 16px;
+        font-weight: 500;
+        border: none;
+    }
+    .stButton>button:hover, .stDownloadButton>button:hover {
+        background-color: #9E83F5;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# Header & intro with bottom border
+st.markdown("""
+    <div style='border-bottom: 1px solid #E8E8E8; padding-bottom: 0.5rem; margin-bottom: 1rem;'>
+        <h2 style='margin-bottom: 0.2rem;'>Extract Action Items From Your Transcript</h2>
+        <p style='color: #666666; font-size: 0.9rem;'>
+            Upload your <code>.docx</code> meeting transcript and extract actionable tasks with speaker attribution.
+            Export results in CSV, JSON, or Markdown.
+        </p>
+    </div>
+""", unsafe_allow_html=True)
 
 # Upload
-uploaded_file = st.file_uploader("Upload Word document", type=["docx"])
+st.markdown("### Upload Your File")
+uploaded_file = st.file_uploader("Choose a Word document (.docx)", type=["docx"])
 
-# Always-visible settings
-st.markdown("### Settings")
-default_owner = st.text_input("Default owner (if no name is detected)", "Team Member")
-due_days = st.number_input("Days until due date", min_value=0, max_value=30, value=7)
+# Detection tuning section
+st.markdown("### Refine Detection")
 keywords = st.text_area(
-    "Comma-separated keywords to help detect action items",
+    "Comma-separated keywords",
     "action, follow up, send, complete, email, share, remind, assign, connect, confirm"
 ).split(",")
 
-# Processing and output
+# Main logic
 if uploaded_file:
-    with st.spinner("Processing transcript..."):
+    with st.spinner("Analyzing transcript..."):
         speaker_blocks = extract_speaker_blocks(uploaded_file)
-        df = find_action_items_with_speakers(speaker_blocks, keywords, due_days)
-
+        _, first_names = extract_names(uploaded_file)
+        df = find_action_items_with_speakers(speaker_blocks, keywords, first_names, due_days=0)
 
     if not df.empty:
         st.success(f"Found {len(df)} action item(s).")
-
         st.markdown("### Extracted Action Items")
-        st.dataframe(df, height=500, use_container_width=True)
+        st.dataframe(df, height=300, use_container_width=True)
 
-        st.markdown("### Download Results")
-        col1, col2, col3 = st.columns(3)
+        #  # Scroll hint - Just uncomment if wanted
+        # st.markdown("""
+        # <div style="text-align:center; margin-top: 0.5rem; color: #666666; font-size: 0.9rem;">
+        #     Scroll down to download your results ↓
+        # </div>
+        # """, unsafe_allow_html=True)
+
+        st.markdown("### Export Results")
+
+        # Download button row
+        col1, col2, col3 = st.columns([1, 1, 1])
 
         with col1:
             csv_data = df.to_csv(index=False).encode('utf-8')
@@ -126,10 +202,8 @@ if uploaded_file:
             st.download_button("Download JSON", json_data, "action_items.json", "application/json")
 
         with col3:
-            md_output = "\n".join([
-                f"- **{row['Action Item']}** (Owner: {row['Owner']}, Due: {row['Due Date']})"
-                for _, row in df.iterrows()
-            ])
+            md_output = "\n".join([f"- **{row['Action Item']}** (Owner: {row['Owner']})" for _, row in df.iterrows()])
             st.download_button("Download Markdown", md_output, "action_items.md", "text/markdown")
     else:
-        st.warning("No action items found. Try adjusting keywords or checking the formatting.")
+        st.info("No action items detected in the transcript.")
+
