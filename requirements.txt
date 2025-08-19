@@ -1,0 +1,6 @@
+streamlit>=1.36
+pandas>=2.0
+python-docx>=1.0
+spacy>=3.7
+# Be sure to install the model as well:
+# python -m spacy download en_core_web_sm
