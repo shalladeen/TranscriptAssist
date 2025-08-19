@@ -1,8 +1,32 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 from .constants import DEFAULT_KEYWORDS
 
+st.set_page_config(
+    page_title="Action Item Extractor",
+    layout="wide",
+)
 
+def load_css(path: str = "style.css") -> None:
+    
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            css = f.read()
+    except FileNotFoundError:
+        st.info(f"Note: '{path}' not found. Skipping custom CSS.")
+        return
+    
+    if hasattr(st, "html"):
+        st.html(f"<style>{css}</style>")
+    else:
+        st.info(
+            "Running on a Streamlit build without 'st.html'. "
+            "Global CSS not applied (theme from config.toml still works)."
+        )
+
+load_css()
+        
 def show_header():
     st.title("Extract Action Items From Your Transcript")
     st.caption(
